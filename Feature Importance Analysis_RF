@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""
+Random Forest Model Evaluation and Feature Importance Analysis
+
+This script performs the following tasks:
+  - Loads a dataset from an Excel file and encodes categorical features.
+  - Splits the data into training (80%) and testing (20%) sets.
+  - Trains a Random Forest classifier with a specified number of trees.
+  - Evaluates the model using performance metrics (accuracy, precision, recall,
+    F1 score, mean absolute error, and mean squared error) on both training and
+    testing sets.
+  - Generates confusion matrices for training and testing sets.
+  - Computes feature importances and visualises them with a bar plot.
+
+Author: Lianyan Li
+Date: 22/02/2025
+"""
+
+import pandas as pd
+import time
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import (accuracy_score, precision_score, recall_score, f1_score,
+                             confusion_matrix, mean_absolute_error, mean_squared_error)
+from sklearn.preprocessing import LabelEncoder
+
+# -----------------------------------------------------------------------------
+# CONFIGURE PLOTTING
+# -----------------------------------------------------------------------------
+plt.rcParams['font.family'] = 'Times New Roman'
+
+# -----------------------------------------------------------------------------
+# DATA LOADING AND PREPROCESSING
+# -----------------------------------------------------------------------------
+file_path = 'Data.xlsx'  # Replace with your actual file path
+df = pd.read_excel(file_path)
+
+# Encode categorical variables
+label_encoders = {}
+for column in df.columns:
+    if df[column].dtype == 'object':
+        le = LabelEncoder()
+        df[column] = le.fit_transform(df[column])
+        label_encoders[column] = le
+
+# Separate features (X) and target (y)
+X = df.iloc[:, :-1]  # All columns except the last one
+y = df.iloc[:, -1]   # The last column
+
+# Split the data into training (80%) and testing (20%) sets
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+# -----------------------------------------------------------------------------
+# RANDOM FOREST MODEL TRAINING
+# -----------------------------------------------------------------------------
+n_estimators = 120  # Number of trees in the forest
+rf_classifier = RandomForestClassifier(n_estimators=n_estimators, random_state=42)
+
+# Train the model and record the training time
+start_time = time.time()
+rf_classifier.fit(X_train, y_train)
+training_time = time.time() - start_time
+
+# -----------------------------------------------------------------------------
+# MODEL PREDICTION AND EVALUATION
+# -----------------------------------------------------------------------------
+# Predict on training and testing sets
+y_train_pred = rf_classifier.predict(X_train)
+y_test_pred = rf_classifier.predict(X_test)
+
+# Compute prediction probabilities (if needed for further analysis)
+y_train_proba = rf_classifier.predict_proba(X_train)
+y_test_proba = rf_classifier.predict_proba(X_test)
+
+# Calculate performance metrics for the training set
+train_accuracy = accuracy_score(y_train, y_train_pred)
+train_precision = precision_score(y_train, y_train_pred, average='weighted')
+train_recall = recall_score(y_train, y_train_pred, average='weighted')
+train_f1 = f1_score(y_train, y_train_pred, average='weighted')
+train_mae = mean_absolute_error(y_train, y_train_pred)
+train_mse = mean_squared_error(y_train, y_train_pred)
+
+# Calculate performance metrics for the testing set
+test_accuracy = accuracy_score(y_test, y_test_pred)
+test_precision = precision_score(y_test, y_test_pred, average='weighted')
+test_recall = recall_score(y_test, y_test_pred, average='weighted')
+test_f1 = f1_score(y_test, y_test_pred, average='weighted')
+test_mae = mean_absolute_error(y_test, y_test_pred)
+test_mse = mean_squared_error(y_test, y_test_pred)
+
+# Generate confusion matrices
+train_conf_matrix = confusion_matrix(y_train, y_train_pred)
+test_conf_matrix = confusion_matrix(y_test, y_test_pred)
+
+# -----------------------------------------------------------------------------
+# FEATURE IMPORTANCE ANALYSIS
+# -----------------------------------------------------------------------------
+feature_importances = rf_classifier.feature_importances_
+feature_importance_df = pd.DataFrame({
+    'Feature': X.columns,
+    'Importance': feature_importances
+}).sort_values(by='Importance', ascending=False)
+
+# Plot feature importances
+plt.figure(figsize=(14, 7))
+sns.barplot(x='Importance', y='Feature', data=feature_importance_df, palette='viridis', dodge=False)
+plt.title('Feature Importance', fontsize=20)
+plt.xlabel('Importance', fontsize=18)
+plt.ylabel('Feature', fontsize=18)
+plt.yticks(fontsize=18, ha='right')
+plt.xticks(fontsize=17)
+plt.tight_layout()
+plt.show()
+
+# -----------------------------------------------------------------------------
+# EXPORT RESULTS TO EXCEL
+# -----------------------------------------------------------------------------
+output_file_path = 'random_forest_evaluation_results.xlsx'  # Replace with your desired output file path
+with pd.ExcelWriter(output_file_path) as writer:
+    # Save overall performance metrics
+    metrics_df = pd.DataFrame({
+        'Metric': ['Accuracy', 'Precision', 'Recall', 'F1 Score', 'MAE', 'MSE', 'Training Time (s)'],
+        'Training Set': [train_accuracy, train_precision, train_recall, train_f1, train_mae, train_mse, training_time],
+        'Testing Set': [test_accuracy, test_precision, test_recall, test_f1, test_mae, test_mse, None]
+    })
+    metrics_df.to_excel(writer, sheet_name='Performance Metrics', index=False)
+    
+    # Save confusion matrices
+    pd.DataFrame(train_conf_matrix).to_excel(writer, sheet_name='Training Confusion Matrix', index=False)
+    pd.DataFrame(test_conf_matrix).to_excel(writer, sheet_name='Testing Confusion Matrix', index=False)
+    
+    # Save feature importances
+    feature_importance_df.to_excel(writer, sheet_name='Feature Importances', index=False)
+
+# -----------------------------------------------------------------------------
+# CONSOLE OUTPUT
+# -----------------------------------------------------------------------------
+print("Training Performance Metrics:")
+print(f"  Accuracy: {train_accuracy:.4f}")
+print(f"  Precision: {train_precision:.4f}")
+print(f"  Recall: {train_recall:.4f}")
+print(f"  F1 Score: {train_f1:.4f}")
+print(f"  MAE: {train_mae:.4f}")
+print(f"  MSE: {train_mse:.4f}")
+print(f"  Training Time: {training_time:.2f} seconds\n")
+
+print("Testing Performance Metrics:")
+print(f"  Accuracy: {test_accuracy:.4f}")
+print(f"  Precision: {test_precision:.4f}")
+print(f"  Recall: {test_recall:.4f}")
+print(f"  F1 Score: {test_f1:.4f}")
+print(f"  MAE: {test_mae:.4f}")
+print(f"  MSE: {test_mse:.4f}\n")
+
+print("Training Confusion Matrix:")
+print(train_conf_matrix)
+print("\nTesting Confusion Matrix:")
+print(test_conf_matrix)
+print(f"\nFeature importances have been saved to '{output_file_path}'.")

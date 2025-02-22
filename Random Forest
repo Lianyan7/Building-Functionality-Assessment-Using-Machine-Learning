@@ -41,7 +41,7 @@ plt.rcParams['font.family'] = 'Times New Roman'
 # -----------------------------------------------------------------------------
 # DATA LOADING AND PREPROCESSING
 # -----------------------------------------------------------------------------
-file_path = 'Data for 5th-component.xlsx'  # Replace with your actual file path
+file_path = 'Data.xlsx'  # Replace with your actual file path
 df = pd.read_excel(file_path)
 
 # Encode categorical variables

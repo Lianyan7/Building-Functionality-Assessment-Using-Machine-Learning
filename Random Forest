@@ -1,34 +1,46 @@
 #!/usr/bin/env python3
 """
-Random Forest Classifier Evaluation with Cross-Validation
+Random Forest Classifier Evaluation, ROC Analysis, and Confusion Matrix Visualisation
 
-This script demonstrates the evaluation of a Random Forest classifier on a dataset 
-loaded from an Excel file. The code performs the following tasks:
-  - Loads and preprocesses the dataset.
+This integrated script performs the following tasks for a Random Forest (RF) model:
+  - Loads and preprocesses the dataset from an Excel file.
   - Encodes categorical variables using LabelEncoder.
-  - Splits the data into training and testing sets.
-  - Evaluates the Random Forest classifier over a range of n_estimators values using 10-fold cross-validation.
-  - Identifies the best n_estimators based on training accuracy.
-  - Trains a final model with the optimal hyperparameter and evaluates its performance on both 
-    the training and test sets.
-  - Exports performance metrics and confusion matrices to an Excel file.
+  - Splits the data into training (80%) and testing (20%) sets.
+  - Evaluates the RF classifier over a range of n_estimators values using 10-fold cross-validation,
+    and selects the best parameter based on training accuracy.
+  - Trains a final RF model using the optimal n_estimators and computes predictions on both training 
+    and test sets.
+  - Calculates performance metrics and exports them (including confusion matrices) to an Excel file.
+  - Computes ROC curves (per-class, micro-average, and macro-average) for the test set and plots them.
+  - Visualises the training and testing confusion matrices with additional metrics (recall, precision, and overall accuracy).
 
 Author: Lianyan Li
-Date: [22/02/2025]
+Date: 22/02/2025
 """
 
 import pandas as pd
 import time
+import warnings
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 from sklearn.model_selection import train_test_split, KFold, cross_val_predict
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
-from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import (accuracy_score, precision_score, recall_score, f1_score,
+                             confusion_matrix, roc_curve, auc)
+from sklearn.preprocessing import LabelEncoder, label_binarize
+from sklearn.exceptions import ConvergenceWarning
+from matplotlib.colors import ListedColormap
 
-# =============================================================================
+# -----------------------------------------------------------------------------
+# CONFIGURE PLOTTING FONT
+# -----------------------------------------------------------------------------
+plt.rcParams['font.family'] = 'Times New Roman'
+
+# -----------------------------------------------------------------------------
 # DATA LOADING AND PREPROCESSING
-# =============================================================================
-
-# Load the dataset from an Excel file.
+# -----------------------------------------------------------------------------
 file_path = 'Data for 5th-component.xlsx'  # Replace with your actual file path
 df = pd.read_excel(file_path)
 
@@ -42,86 +54,186 @@ for column in df.columns:
 
 # Separate features (X) and target (y)
 X = df.iloc[:, :-1]  # All columns except the last one
-y = df.iloc[:, -1]   # The last column
+y = df.iloc[:, -1]  # The last column
 
-# Split the data into training (80%) and testing (20%) sets
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# Binarize target variable for ROC curve generation
+y_binarized = label_binarize(y, classes=range(len(y.unique())))
 
-# =============================================================================
-# CROSS-VALIDATION AND HYPERPARAMETER EVALUATION
-# =============================================================================
+# Split data into training (80%) and testing (20%) sets
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+# Binarize training and test targets for ROC analysis
+y_train_binarized = label_binarize(y_train, classes=range(len(y.unique())))
+y_test_binarized = label_binarize(y_test, classes=range(len(y.unique())))
 
+# -----------------------------------------------------------------------------
+# CROSS-VALIDATION AND HYPERPARAMETER EVALUATION (RF)
+# -----------------------------------------------------------------------------
 results = []
-# Define a list of n_estimators values to evaluate
 n_estimators_list = [50, 60, 70, 80, 90, 100, 110, 120]
 
 # Initialise 10-fold cross-validation
 kf = KFold(n_splits=10, shuffle=True, random_state=42)
 
-# Loop over different n_estimators values
 for n in n_estimators_list:
-    # Initialize the Random Forest classifier with n_estimators=n
+    # Initialize the RF classifier with current n_estimators
     rf_classifier = RandomForestClassifier(n_estimators=n, random_state=42)
 
     # Record training time using cross-validation predictions
     start_time = time.time()
-    y_pred = cross_val_predict(rf_classifier, X_train, y_train, cv=kf)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', ConvergenceWarning)
+        y_pred_cv = cross_val_predict(rf_classifier, X_train, y_train, cv=kf)
     training_time = time.time() - start_time
 
-    # Calculate performance metrics on the training set
-    accuracy = accuracy_score(y_train, y_pred)
-    precision = precision_score(y_train, y_pred, average='weighted')
-    recall = recall_score(y_train, y_pred, average='weighted')
-    f1 = f1_score(y_train, y_pred, average='weighted')
+    # Compute performance metrics on training data
+    acc = accuracy_score(y_train, y_pred_cv)
+    prec = precision_score(y_train, y_pred_cv, average='weighted')
+    rec = recall_score(y_train, y_pred_cv, average='weighted')
+    f1 = f1_score(y_train, y_pred_cv, average='weighted')
 
-    # Append results for the current hyperparameter setting
     results.append({
         'n_estimators': n,
-        'accuracy': accuracy,
-        'precision': precision,
-        'recall': recall,
+        'accuracy': acc,
+        'precision': prec,
+        'recall': rec,
         'f1_score': f1,
         'training_time': training_time
     })
 
-# Convert the results to a DataFrame
 results_df = pd.DataFrame(results)
-
-# Identify the best n_estimators based on the highest training accuracy
 best_n = results_df.loc[results_df['accuracy'].idxmax()]['n_estimators']
+print("Best n_estimators:", best_n)
 
-# =============================================================================
-# FINAL MODEL TRAINING AND EVALUATION
-# =============================================================================
-
-# Train the final model using the best n_estimators on the entire training set
+# -----------------------------------------------------------------------------
+# FINAL MODEL TRAINING AND EVALUATION (RF)
+# -----------------------------------------------------------------------------
 final_rf_classifier = RandomForestClassifier(n_estimators=int(best_n), random_state=42)
 final_rf_classifier.fit(X_train, y_train)
 
-# Generate predictions for training and test sets
+# Predictions on training and test sets
 y_train_pred = final_rf_classifier.predict(X_train)
 y_test_pred = final_rf_classifier.predict(X_test)
 
-# Compute confusion matrices for training and testing sets
+# Compute confusion matrices
 train_conf_matrix = confusion_matrix(y_train, y_train_pred)
 test_conf_matrix = confusion_matrix(y_test, y_test_pred)
 
-# =============================================================================
-# EXPORT RESULTS TO EXCEL
-# =============================================================================
+# ROC Analysis on Test Set
+y_test_proba = final_rf_classifier.predict_proba(X_test)
+n_classes = y_binarized.shape[1]
 
+fpr = dict()
+tpr = dict()
+roc_auc = dict()
+
+for i in range(n_classes):
+    fpr[i], tpr[i], _ = roc_curve(y_test_binarized[:, i], y_test_proba[:, i])
+    roc_auc[i] = auc(fpr[i], tpr[i])
+
+# Micro-average ROC
+fpr["micro"], tpr["micro"], _ = roc_curve(y_test_binarized.ravel(), y_test_proba.ravel())
+roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+
+# Macro-average ROC
+all_fpr = np.unique(np.concatenate([fpr[i] for i in range(n_classes)]))
+mean_tpr = np.zeros_like(all_fpr)
+for i in range(n_classes):
+    mean_tpr += np.interp(all_fpr, fpr[i], tpr[i])
+mean_tpr /= n_classes
+fpr["macro"] = all_fpr
+tpr["macro"] = mean_tpr
+roc_auc["macro"] = auc(fpr["macro"], tpr["macro"])
+
+# Plot ROC Curves
+colors = ['red', 'purple', 'orange', 'blue', 'green']
+classes = ['F0', 'F1', 'F2', 'F3', 'F4']
+plt.figure(figsize=(8, 6))
+for i, color in zip(range(n_classes), colors):
+    plt.plot(fpr[i], tpr[i], color=color, lw=2,
+             label=f'ROC curve of class {classes[i]} (area = {roc_auc[i]:0.2f})')
+plt.plot(fpr["micro"], tpr["micro"], linestyle=':', linewidth=2,
+         label=f'Micro-average ROC (area = {roc_auc["micro"]:0.2f})')
+plt.plot(fpr["macro"], tpr["macro"], linestyle=':', linewidth=2,
+         label=f'Macro-average ROC (area = {roc_auc["macro"]:0.2f})')
+plt.plot([0, 1], [0, 1], '--', lw=2)
+plt.xlim([0.0, 1.0])
+plt.ylim([0.0, 1.05])
+plt.xlabel('False Positive Rate', fontsize=18)
+plt.ylabel('True Positive Rate', fontsize=18)
+plt.title('Receiver Operating Characteristic (ROC) Curve', fontsize=20)
+plt.legend(loc="lower right", fontsize=12)
+plt.show()
+
+
+# -----------------------------------------------------------------------------
+# CONFUSION MATRIX VISUALISATION WITH EXTRA METRICS
+# -----------------------------------------------------------------------------
+def plot_conf_matrix(conf_matrix, title):
+    """
+    Plot a confusion matrix with an extra row and column that display per-class recall,
+    per-class precision, and overall accuracy.
+    """
+    total = np.sum(conf_matrix)
+    labels = [[f"{val:0.0f}\n{val / total:.2%}" for val in row] for row in conf_matrix]
+    states = ['F0', 'F1', 'F2', 'F3', 'F4']
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    sns.heatmap(conf_matrix, annot=labels, cmap='Reds', fmt='',
+                xticklabels=states, yticklabels=states, cbar=False, ax=ax,
+                annot_kws={"size": 18})
+    ax.set_title(title, fontweight='bold', fontsize=20)
+    ax.tick_params(labeltop=True, labelbottom=False, length=0, labelsize=18)
+    ax.set_ylabel('Actual Damage State', fontweight='bold', fontsize=19)
+    ax.set_xlabel('Predicted Damage State', fontweight='bold', fontsize=19)
+
+    # Create matrix for extra metrics (recall, precision, overall accuracy)
+    f_mat = np.zeros((conf_matrix.shape[0] + 1, conf_matrix.shape[1] + 1))
+    epsilon = 1e-10  # To avoid division by zero
+
+    # Fill extra column with per-class recall
+    f_mat[:-1, -1] = np.diag(conf_matrix) / (np.sum(conf_matrix, axis=1) + epsilon)
+    # Fill extra row with per-class precision
+    f_mat[-1, :-1] = np.diag(conf_matrix) / (np.sum(conf_matrix, axis=0) + epsilon)
+    # Overall accuracy in bottom-right cell
+    f_mat[-1, -1] = np.trace(conf_matrix) / (total + epsilon)
+
+    f_mask = np.ones_like(f_mat)
+    f_mask[:, -1] = 0  # Unmask last column
+    f_mask[-1, :] = 0  # Unmask last row
+
+    f_color = np.ones_like(f_mat)
+    f_color[-1, -1] = 0  # Different colour for overall accuracy
+
+    f_annot = [[f"{val:0.2%}" for val in row] for row in f_mat]
+    f_annot[-1][-1] = "Acc.:\n" + f_annot[-1][-1]
+
+    sns.heatmap(f_color, mask=f_mask, annot=f_annot, fmt='',
+                xticklabels=states + ["Recall"],
+                yticklabels=states + ["Precision"],
+                cmap=ListedColormap(['skyblue', 'lightgrey']),
+                cbar=False, ax=ax,
+                annot_kws={"size": 16})
+    plt.show()
+
+
+# Plot training and testing confusion matrices
+plot_conf_matrix(train_conf_matrix, "Training Confusion Matrix")
+plot_conf_matrix(test_conf_matrix, "Testing Confusion Matrix")
+
+# -----------------------------------------------------------------------------
+# EXPORT RESULTS TO EXCEL
+# -----------------------------------------------------------------------------
 output_file_path = 'random_forest_results_(50-120).xlsx'  # Replace with your desired output file path
 with pd.ExcelWriter(output_file_path) as writer:
     results_df.to_excel(writer, sheet_name='Performance Metrics', index=False)
-    
-    # Save confusion matrices as separate sheets
     pd.DataFrame(train_conf_matrix).to_excel(writer, sheet_name='Training Confusion Matrix', index=False)
     pd.DataFrame(test_conf_matrix).to_excel(writer, sheet_name='Testing Confusion Matrix', index=False)
 
-# =============================================================================
+# -----------------------------------------------------------------------------
 # CONSOLE OUTPUT
-# =============================================================================
-
+# -----------------------------------------------------------------------------
 print("Performance Metrics:")
 print(results_df.head())
 print("\nBest n_estimators:", best_n)

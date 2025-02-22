@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""
+MLP Classifier Evaluation with Cross-Validation and Final Testing
+
+This script evaluates a Multilayer Perceptron (MLP) classifier using 10-fold cross-validation
+across a grid of hyperparameters (hidden layer size, maximum iterations, and learning rate) on a
+dataset loaded from an Excel file. The best hyperparameter combination is selected based on the 
+training accuracy. A final MLP model is then trained on the entire training set and evaluated on
+the test set. Performance metrics and the resulting confusion matrix are exported to an Excel file.
+
+Author: Lianyan Li
+Date: [22/02/2025]
+"""
+
+import pandas as pd
+import time
+import warnings
+from sklearn.model_selection import train_test_split, KFold, cross_val_predict
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.preprocessing import LabelEncoder
+from sklearn.exceptions import ConvergenceWarning
+
+# =============================================================================
+# DATA LOADING AND PREPROCESSING
+# =============================================================================
+
+# Load the dataset from an Excel file.
+file_path = 'Data for 5th-component.xlsx'  # Replace with your actual file path
+df = pd.read_excel(file_path)
+
+# Encode categorical variables using LabelEncoder
+label_encoders = {}
+for column in df.columns:
+    if df[column].dtype == 'object':
+        le = LabelEncoder()
+        df[column] = le.fit_transform(df[column])
+        label_encoders[column] = le
+
+# Separate inputs (features) and output (target)
+X = df.iloc[:, :-1]  # All columns except the last one
+y = df.iloc[:, -1]   # The last column
+
+# Split the data into training (80%) and testing (20%) sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# =============================================================================
+# CROSS-VALIDATION AND HYPERPARAMETER TUNING
+# =============================================================================
+
+results = []
+hidden_states = [100, 200, 300, 400, 500]
+max_iterations = [100, 300, 500, 700]
+learning_rates = [0.01, 0.001]
+
+# Initialize 10-fold cross-validation
+kf = KFold(n_splits=10, shuffle=True, random_state=42)
+
+# Loop over different combinations of hyperparameters
+for hidden_layer in hidden_states:
+    for max_iter in max_iterations:
+        for lr in learning_rates:
+            # Initialize the MLP classifier with the current hyperparameters
+            mlp_classifier = MLPClassifier(
+                hidden_layer_sizes=(int(hidden_layer),),
+                max_iter=int(max_iter),
+                learning_rate_init=float(lr),
+                random_state=42,
+                early_stopping=True,
+                n_iter_no_change=10
+            )
+
+            # Record training time using cross-validation predictions
+            start_time = time.time()
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', ConvergenceWarning)
+                y_pred = cross_val_predict(mlp_classifier, X_train, y_train, cv=kf)
+            training_time = time.time() - start_time
+
+            # Calculate performance metrics on the training set
+            accuracy = accuracy_score(y_train, y_pred)
+            precision = precision_score(y_train, y_pred, average='weighted', zero_division=0)
+            recall = recall_score(y_train, y_pred, average='weighted', zero_division=0)
+            f1 = f1_score(y_train, y_pred, average='weighted')
+
+            # Append results for the current hyperparameter combination
+            results.append({
+                'hidden_layer': hidden_layer,
+                'max_iter': max_iter,
+                'learning_rate': lr,
+                'accuracy': accuracy,
+                'precision': precision,
+                'recall': recall,
+                'f1_score': f1,
+                'training_time': training_time
+            })
+
+# Create a DataFrame with the results
+results_df = pd.DataFrame(results)
+
+# Find the best hyperparameters based on highest accuracy
+best_params = results_df.loc[results_df['accuracy'].idxmax()]
+
+# =============================================================================
+# FINAL MODEL TRAINING AND EVALUATION
+# =============================================================================
+
+# Initialize and train the final MLP classifier using the best hyperparameters
+final_mlp_classifier = MLPClassifier(
+    hidden_layer_sizes=(int(best_params['hidden_layer']),),
+    max_iter=int(best_params['max_iter']),
+    learning_rate_init=float(best_params['learning_rate']),
+    random_state=42,
+    early_stopping=True,
+    n_iter_no_change=10
+)
+final_mlp_classifier.fit(X_train, y_train)
+
+# Predict on the test set
+y_test_pred = final_mlp_classifier.predict(X_test)
+
+# Generate the confusion matrix for the final model on the test set
+conf_matrix = confusion_matrix(y_test, y_test_pred)
+
+# =============================================================================
+# EXPORT RESULTS TO EXCEL
+# =============================================================================
+
+output_file_path = 'mlp_results_with_conf_matrix.xlsx'  # Replace with your desired output file path
+with pd.ExcelWriter(output_file_path) as writer:
+    results_df.to_excel(writer, sheet_name='Performance Metrics', index=False)
+    pd.DataFrame(conf_matrix).to_excel(writer, sheet_name='Confusion Matrix', index=False)
+
+# =============================================================================
+# OUTPUT RESULTS TO CONSOLE
+# =============================================================================
+
+print("Performance Metrics (first few rows):")
+print(results_df.head())
+print("\nBest Parameters:")
+print(best_params)
+print("\nConfusion Matrix on Test Set:")
+print(conf_matrix)

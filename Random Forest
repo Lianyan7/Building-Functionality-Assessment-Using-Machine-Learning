@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""
+Random Forest Classifier Evaluation with Cross-Validation
+
+This script demonstrates the evaluation of a Random Forest classifier on a dataset 
+loaded from an Excel file. The code performs the following tasks:
+  - Loads and preprocesses the dataset.
+  - Encodes categorical variables using LabelEncoder.
+  - Splits the data into training and testing sets.
+  - Evaluates the Random Forest classifier over a range of n_estimators values using 10-fold cross-validation.
+  - Identifies the best n_estimators based on training accuracy.
+  - Trains a final model with the optimal hyperparameter and evaluates its performance on both 
+    the training and test sets.
+  - Exports performance metrics and confusion matrices to an Excel file.
+
+Author: Lianyan Li
+Date: [22/02/2025]
+"""
+
+import pandas as pd
+import time
+from sklearn.model_selection import train_test_split, KFold, cross_val_predict
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.preprocessing import LabelEncoder
+
+# =============================================================================
+# DATA LOADING AND PREPROCESSING
+# =============================================================================
+
+# Load the dataset from an Excel file.
+file_path = 'Data for 5th-component.xlsx'  # Replace with your actual file path
+df = pd.read_excel(file_path)
+
+# Encode categorical variables
+label_encoders = {}
+for column in df.columns:
+    if df[column].dtype == 'object':
+        le = LabelEncoder()
+        df[column] = le.fit_transform(df[column])
+        label_encoders[column] = le
+
+# Separate features (X) and target (y)
+X = df.iloc[:, :-1]  # All columns except the last one
+y = df.iloc[:, -1]   # The last column
+
+# Split the data into training (80%) and testing (20%) sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# =============================================================================
+# CROSS-VALIDATION AND HYPERPARAMETER EVALUATION
+# =============================================================================
+
+results = []
+# Define a list of n_estimators values to evaluate
+n_estimators_list = [50, 60, 70, 80, 90, 100, 110, 120]
+
+# Initialise 10-fold cross-validation
+kf = KFold(n_splits=10, shuffle=True, random_state=42)
+
+# Loop over different n_estimators values
+for n in n_estimators_list:
+    # Initialize the Random Forest classifier with n_estimators=n
+    rf_classifier = RandomForestClassifier(n_estimators=n, random_state=42)
+
+    # Record training time using cross-validation predictions
+    start_time = time.time()
+    y_pred = cross_val_predict(rf_classifier, X_train, y_train, cv=kf)
+    training_time = time.time() - start_time
+
+    # Calculate performance metrics on the training set
+    accuracy = accuracy_score(y_train, y_pred)
+    precision = precision_score(y_train, y_pred, average='weighted')
+    recall = recall_score(y_train, y_pred, average='weighted')
+    f1 = f1_score(y_train, y_pred, average='weighted')
+
+    # Append results for the current hyperparameter setting
+    results.append({
+        'n_estimators': n,
+        'accuracy': accuracy,
+        'precision': precision,
+        'recall': recall,
+        'f1_score': f1,
+        'training_time': training_time
+    })
+
+# Convert the results to a DataFrame
+results_df = pd.DataFrame(results)
+
+# Identify the best n_estimators based on the highest training accuracy
+best_n = results_df.loc[results_df['accuracy'].idxmax()]['n_estimators']
+
+# =============================================================================
+# FINAL MODEL TRAINING AND EVALUATION
+# =============================================================================
+
+# Train the final model using the best n_estimators on the entire training set
+final_rf_classifier = RandomForestClassifier(n_estimators=int(best_n), random_state=42)
+final_rf_classifier.fit(X_train, y_train)
+
+# Generate predictions for training and test sets
+y_train_pred = final_rf_classifier.predict(X_train)
+y_test_pred = final_rf_classifier.predict(X_test)
+
+# Compute confusion matrices for training and testing sets
+train_conf_matrix = confusion_matrix(y_train, y_train_pred)
+test_conf_matrix = confusion_matrix(y_test, y_test_pred)
+
+# =============================================================================
+# EXPORT RESULTS TO EXCEL
+# =============================================================================
+
+output_file_path = 'random_forest_results_(50-120).xlsx'  # Replace with your desired output file path
+with pd.ExcelWriter(output_file_path) as writer:
+    results_df.to_excel(writer, sheet_name='Performance Metrics', index=False)
+    
+    # Save confusion matrices as separate sheets
+    pd.DataFrame(train_conf_matrix).to_excel(writer, sheet_name='Training Confusion Matrix', index=False)
+    pd.DataFrame(test_conf_matrix).to_excel(writer, sheet_name='Testing Confusion Matrix', index=False)
+
+# =============================================================================
+# CONSOLE OUTPUT
+# =============================================================================
+
+print("Performance Metrics:")
+print(results_df.head())
+print("\nBest n_estimators:", best_n)
+print("\nTraining Confusion Matrix:")
+print(train_conf_matrix)
+print("\nTesting Confusion Matrix:")
+print(test_conf_matrix)

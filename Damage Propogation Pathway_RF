@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""
+Random Forest Decision Path Extraction for Influential Combinations
+
+This script trains a Random Forest classifier on a dataset loaded from an Excel file,
+and then extracts decision paths from each tree to identify influential combinations 
+of feature thresholds that lead to predictions. Categorical variables are encoded 
+and mappings to original values are stored. The script aggregates the most frequently 
+occurring decision paths per class label and saves the results to an Excel file for 
+further analysis.
+
+Author: Lianyan Li
+Date: 22/02/2025
+"""
+
+import pandas as pd
+import time
+import numpy as np
+from collections import defaultdict
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import LabelEncoder
+import warnings
+
+# -----------------------------------------------------------------------------
+# DATA LOADING AND PREPROCESSING
+# -----------------------------------------------------------------------------
+file_path = 'Data.xlsx'  # Replace with your actual file path
+df = pd.read_excel(file_path)
+
+# Encode categorical variables and create mappings to original values
+label_encoders = {}
+value_mappings = {}
+for column in df.columns:
+    if df[column].dtype == 'object':
+        le = LabelEncoder()
+        df[column] = le.fit_transform(df[column])
+        label_encoders[column] = le
+        # Mapping from encoded values to original class labels
+        value_mappings[column] = dict(zip(le.transform(le.classes_), le.classes_))
+
+# Separate inputs (features) and output (target)
+X = df.iloc[:, :-1].astype(np.float32)  # Ensure numeric type
+y = df.iloc[:, -1]  # The last column as target
+
+# Split the data into training (80%) and testing (20%) sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# -----------------------------------------------------------------------------
+# TRAIN RANDOM FOREST CLASSIFIER
+# -----------------------------------------------------------------------------
+n_estimators = 120  # Set the number of trees in the forest
+rf_classifier = RandomForestClassifier(n_estimators=n_estimators, random_state=42)
+rf_classifier.fit(X_train, y_train)
+
+# -----------------------------------------------------------------------------
+# DECISION PATH EXTRACTION FUNCTIONS
+# -----------------------------------------------------------------------------
+def tree_paths(tree, feature_names):
+    """
+    Recursively traverse a decision tree to extract all decision paths.
+    
+    Parameters:
+        tree: The tree_ attribute of an individual decision tree.
+        feature_names: List of feature names corresponding to the dataset.
+        
+    Returns:
+        paths: A list of tuples, each containing a decision path (as a list of splits)
+               and the predicted class label (as an integer) for that terminal node.
+    """
+    paths = []
+    path = []
+
+    def traverse(node):
+        # If not a leaf node, then traverse children
+        if tree.feature[node] != -2:
+            name = feature_names[tree.feature[node]]
+            threshold = tree.threshold[node]
+            # Traverse left child (feature value <= threshold)
+            path.append((name, "<=", threshold))
+            traverse(tree.children_left[node])
+            path.pop()
+            # Traverse right child (feature value > threshold)
+            path.append((name, ">", threshold))
+            traverse(tree.children_right[node])
+            path.pop()
+        else:
+            # Terminal node: record path and predicted class (argmax of node's value array)
+            paths.append((list(path), np.argmax(tree.value[node])))
+
+    traverse(0)
+    return paths
+
+def top_combinations(paths, n=5):
+    """
+    Identify the top n most frequent decision path combinations.
+    
+    Parameters:
+        paths: A list of decision paths (each as a tuple of splits).
+        n: The number of top combinations to return.
+        
+    Returns:
+        A sorted list of tuples (combination, count) for the top n combinations.
+    """
+    combination_counts = defaultdict(int)
+    for path in paths:
+        combination = tuple(path)
+        combination_counts[combination] += 1
+    sorted_combinations = sorted(combination_counts.items(), key=lambda x: x[1], reverse=True)
+    return sorted_combinations[:n]
+
+def map_thresholds(path, value_mappings):
+    """
+    Map encoded threshold values back to their original representations where possible.
+    
+    Parameters:
+        path: A list of splits in the form (feature, operator, threshold).
+        value_mappings: A dictionary containing mappings for categorical features.
+        
+    Returns:
+        mapped_path: A list of splits with thresholds mapped back to original values.
+    """
+    mapped_path = []
+    for feature, operator, threshold in path:
+        if feature in value_mappings:
+            # Attempt to map the integer threshold back to the original value
+            original_value = value_mappings[feature].get(int(threshold), threshold)
+            mapped_path.append((feature, operator, original_value))
+        else:
+            mapped_path.append((feature, operator, threshold))
+    return mapped_path
+
+# -----------------------------------------------------------------------------
+# EXTRACT DECISION PATHS FROM THE RANDOM FOREST
+# -----------------------------------------------------------------------------
+all_paths = defaultdict(list)
+for tree_in_forest in rf_classifier.estimators_:
+    tree = tree_in_forest.tree_
+    tree_paths_result = tree_paths(tree, X.columns)
+    for path, class_label in tree_paths_result:
+        all_paths[class_label].append(path)
+
+# Identify top combinations for each class label
+top_combinations_per_label = {label: top_combinations(paths)
+                              for label, paths in all_paths.items()}
+
+# -----------------------------------------------------------------------------
+# OUTPUT RESULTS: PRINT AND SAVE TO EXCEL
+# -----------------------------------------------------------------------------
+results = []
+for label, combinations in top_combinations_per_label.items():
+    print(f"Top combinations for label {label}:")
+    for combination, count in combinations:
+        mapped_combination = map_thresholds(combination, value_mappings)
+        print(f"  Combination: {mapped_combination}, Count: {count}")
+        results.append({
+            'Label': label,
+            'Combination': mapped_combination,
+            'Count': count
+        })
+
+results_df = pd.DataFrame(results)
+results_df.to_excel('influential_combinations.xlsx', index=False)
+print("Results have been saved to 'influential_combinations.xlsx'")

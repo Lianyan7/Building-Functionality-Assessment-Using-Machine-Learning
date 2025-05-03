@@ -1,11 +1,7 @@
 # Building Functionality Assessment Using Machine-Learning
 Supplemental Materials for the Paper ___"Assessing the Loss of Building Functionality Post-Earthquake Using Machine Learning"___
  
-This repository provides the Python code underlying a novel computational framework designed to evaluate earthquake-induced loss of building functionality. The code was developed by Lianyan Li and is based on the methodologies described in the following publication:
-
-Li, L., Chang-Richards, A., et al. (2025). *Assessing the loss of building functionality post-earthquake using machine learning*. Earthquake Spectra.
-
-Due to the sensitive nature of the data, which includes private property information, only the Python code is publicly available.
+This repository provides the Python code underlying a novel computational framework designed to evaluate earthquake-induced loss of building functionality. The code was developed by Lianyan Li. Due to the sensitive nature of the data, which includes private property information, only the Python code is publicly available.
 
 This repository contains four Python files:
 

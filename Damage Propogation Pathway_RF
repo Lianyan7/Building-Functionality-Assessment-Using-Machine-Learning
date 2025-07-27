@@ -14,151 +14,130 @@ Date: 22/02/2025
 """
 
 import pandas as pd
-import time
 import numpy as np
-from collections import defaultdict
+from collections import defaultdict, Counter
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
-import warnings
 
 # -----------------------------------------------------------------------------
 # DATA LOADING AND PREPROCESSING
 # -----------------------------------------------------------------------------
-file_path = 'Data.xlsx'  # Replace with your actual file path
+file_path = 'Data-binary.xlsx'  # Replace with your actual file path
 df = pd.read_excel(file_path)
 
 # Encode categorical variables and create mappings to original values
-label_encoders = {}
 value_mappings = {}
-for column in df.columns:
-    if df[column].dtype == 'object':
-        le = LabelEncoder()
-        df[column] = le.fit_transform(df[column])
-        label_encoders[column] = le
-        # Mapping from encoded values to original class labels
-        value_mappings[column] = dict(zip(le.transform(le.classes_), le.classes_))
+categorical_cols = df.select_dtypes(include='object').columns.tolist()
+for col in categorical_cols:
+    le = LabelEncoder()
+    df[col] = le.fit_transform(df[col])
+    value_mappings[col] = {idx: val for idx, val in enumerate(le.classes_)}
 
 # Separate inputs (features) and output (target)
-X = df.iloc[:, :-1].astype(np.float32)  # Ensure numeric type
-y = df.iloc[:, -1]  # The last column as target
-
-# Split the data into training (80%) and testing (20%) sets
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+X = df.iloc[:, :-1].astype(np.float32)
+y = df.iloc[:, -1]
 
 # -----------------------------------------------------------------------------
 # TRAIN RANDOM FOREST CLASSIFIER
 # -----------------------------------------------------------------------------
-n_estimators = 120  # Set the number of trees in the forest
-rf_classifier = RandomForestClassifier(n_estimators=n_estimators, random_state=42)
+rf_classifier = RandomForestClassifier(
+    n_estimators=60,
+    max_depth=6,
+    min_samples_split=20,
+    min_samples_leaf=10,
+    max_features='sqrt',
+    random_state=42,
+    n_jobs=-1
+)
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, stratify=y, random_state=42
+)
 rf_classifier.fit(X_train, y_train)
 
 # -----------------------------------------------------------------------------
 # DECISION PATH EXTRACTION FUNCTIONS
 # -----------------------------------------------------------------------------
-def tree_paths(tree, feature_names):
+def extract_paths(tree, feature_names):
     """
     Recursively traverse a decision tree to extract all decision paths.
     
-    Parameters:
-        tree: The tree_ attribute of an individual decision tree.
-        feature_names: List of feature names corresponding to the dataset.
-        
     Returns:
-        paths: A list of tuples, each containing a decision path (as a list of splits)
-               and the predicted class label (as an integer) for that terminal node.
+        A list of tuples: (conditions, predicted class label, leaf probability)
     """
     paths = []
-    path = []
 
-    def traverse(node):
-        # If not a leaf node, then traverse children
-        if tree.feature[node] != -2:
-            name = feature_names[tree.feature[node]]
-            threshold = tree.threshold[node]
-            # Traverse left child (feature value <= threshold)
-            path.append((name, "<=", threshold))
-            traverse(tree.children_left[node])
-            path.pop()
-            # Traverse right child (feature value > threshold)
-            path.append((name, ">", threshold))
-            traverse(tree.children_right[node])
-            path.pop()
-        else:
-            # Terminal node: record path and predicted class (argmax of node's value array)
-            paths.append((list(path), np.argmax(tree.value[node])))
-
-    traverse(0)
+    def recurse(node, conditions):
+        if tree.children_left[node] == tree.children_right[node]:
+            pred = int(np.argmax(tree.value[node][0]))
+            probs = tree.value[node][0] / tree.value[node][0].sum()
+            prob = float(probs[pred])
+            paths.append((tuple(conditions), pred, prob))
+            return
+        feat = feature_names[tree.feature[node]]
+        thr = tree.threshold[node]
+        recurse(tree.children_left[node], conditions + [(feat, '<=', thr)])
+        recurse(tree.children_right[node], conditions + [(feat, '>', thr)])
+    
+    recurse(0, [])
     return paths
 
-def top_combinations(paths, n=5):
-    """
-    Identify the top n most frequent decision path combinations.
-    
-    Parameters:
-        paths: A list of decision paths (each as a tuple of splits).
-        n: The number of top combinations to return.
-        
-    Returns:
-        A sorted list of tuples (combination, count) for the top n combinations.
-    """
-    combination_counts = defaultdict(int)
-    for path in paths:
-        combination = tuple(path)
-        combination_counts[combination] += 1
-    sorted_combinations = sorted(combination_counts.items(), key=lambda x: x[1], reverse=True)
-    return sorted_combinations[:n]
-
-def map_thresholds(path, value_mappings):
-    """
-    Map encoded threshold values back to their original representations where possible.
-    
-    Parameters:
-        path: A list of splits in the form (feature, operator, threshold).
-        value_mappings: A dictionary containing mappings for categorical features.
-        
-    Returns:
-        mapped_path: A list of splits with thresholds mapped back to original values.
-    """
-    mapped_path = []
-    for feature, operator, threshold in path:
-        if feature in value_mappings:
-            # Attempt to map the integer threshold back to the original value
-            original_value = value_mappings[feature].get(int(threshold), threshold)
-            mapped_path.append((feature, operator, original_value))
+def pretty_path(path):
+    """Format a decision path with human-readable thresholds."""
+    lines = []
+    for feat, op, thr in path:
+        if feat in value_mappings and float(thr).is_integer():
+            original = value_mappings[feat].get(int(thr), thr)
+            lines.append(f"{feat} {op} '{original}'")
         else:
-            mapped_path.append((feature, operator, threshold))
-    return mapped_path
+            lines.append(f"{feat} {op} {thr:.4f}")
+    return lines
 
 # -----------------------------------------------------------------------------
-# EXTRACT DECISION PATHS FROM THE RANDOM FOREST
+# AGGREGATE AND RANK TOP DECISION PATHS
 # -----------------------------------------------------------------------------
-all_paths = defaultdict(list)
-for tree_in_forest in rf_classifier.estimators_:
-    tree = tree_in_forest.tree_
-    tree_paths_result = tree_paths(tree, X.columns)
-    for path, class_label in tree_paths_result:
-        all_paths[class_label].append(path)
+label_paths = defaultdict(list)
+for estimator in rf_classifier.estimators_:
+    for path, label, prob in extract_paths(estimator.tree_, X.columns.tolist()):
+        label_paths[label].append((path, prob))
 
-# Identify top combinations for each class label
-top_combinations_per_label = {label: top_combinations(paths)
-                              for label, paths in all_paths.items()}
+# Compute total path counts per label
+total_counts = {lbl: len(paths) for lbl, paths in label_paths.items()}
+
+# Top-5 most frequent paths per label with average probability and share
+top_paths_per_label = {}
+for lbl, items in label_paths.items():
+    path_counter = Counter([tuple(path) for path, _ in items])
+    top5 = path_counter.most_common(5)
+    results = []
+    for path, freq in top5:
+        probs = [prob for (p, prob) in items if tuple(p) == path]
+        avg_prob = np.mean(probs)
+        percentage = (freq / total_counts[lbl]) * 100
+        results.append((path, freq, percentage, avg_prob))
+    top_paths_per_label[lbl] = results
 
 # -----------------------------------------------------------------------------
 # OUTPUT RESULTS: PRINT AND SAVE TO EXCEL
 # -----------------------------------------------------------------------------
-results = []
-for label, combinations in top_combinations_per_label.items():
-    print(f"Top combinations for label {label}:")
-    for combination, count in combinations:
-        mapped_combination = map_thresholds(combination, value_mappings)
-        print(f"  Combination: {mapped_combination}, Count: {count}")
-        results.append({
-            'Label': label,
-            'Combination': mapped_combination,
-            'Count': count
+rows = []
+for lbl, paths_info in top_paths_per_label.items():
+    label_name = 'AFS' if lbl == 0 else 'UFS'
+    print(f"\nTop-5 paths for {label_name} (frequency, % of total, mean probability):")
+    for i, (path, freq, pct, avg_prob) in enumerate(paths_info, 1):
+        for cond in pretty_path(path):
+            print(f"   - {cond}")
+        print(f"   → Frequency: {freq} ({pct:.1f}%), Mean probability: {avg_prob:.2f}\n")
+        conds = '; '.join(pretty_path(path))
+        rows.append({
+            'Label': label_name,
+            'Rank': i,
+            'Conditions': conds,
+            'Frequency': freq,
+            'Percentage': pct,
+            'Mean_Probability': avg_prob
         })
 
-results_df = pd.DataFrame(results)
-results_df.to_excel('influential_combinations.xlsx', index=False)
-print("Results have been saved to 'influential_combinations.xlsx'")
+results_df = pd.DataFrame(rows)
+results_df.to_excel('top_paths_with_percentages.xlsx', index=False)
+print("Results have been saved to 'top_paths_with_percentages.xlsx'")

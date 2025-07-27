@@ -42,7 +42,7 @@ y = df.iloc[:, -1]
 # TRAIN RANDOM FOREST CLASSIFIER
 # -----------------------------------------------------------------------------
 rf_classifier = RandomForestClassifier(
-    n_estimators=60,
+    n_estimators=120,
     max_depth=6,
     min_samples_split=20,
     min_samples_leaf=10,
